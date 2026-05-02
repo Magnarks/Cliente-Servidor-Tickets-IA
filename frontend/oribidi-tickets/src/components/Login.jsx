@@ -97,7 +97,7 @@ function Login() {
     form.setAttribute('method', 'GET');
     form.setAttribute('action', oauth2Endpoint);
 
-    var params = {'client_id': '535675449174-m8c7a5hpgtihgnlslpi07jbi9er08s4v.apps.googleusercontent.com',
+    var params = {'client_id': process.env.REACT_APP_GOOGLE_API_KEY,
                   'redirect_uri': 'http://localhost:5173/',
                   'response_type': 'token',
                   'scope': 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile openid',
