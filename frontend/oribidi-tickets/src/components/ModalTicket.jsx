@@ -89,7 +89,7 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
             <Form>
                 {isEditing && (
                 <Form.Group className="mb-3">
-                    <Form.Label><strong>ID</strong></Form.Label>
+                    <Form.Label style={{ color: "white" }}><strong>ID</strong></Form.Label>
                     <Form.Control type="text" value={formData.id} readOnly />
                 </Form.Group>
                 )}
@@ -154,7 +154,7 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
                         onChange={handleChange}
                     >
                         <option>Abierto</option>
-                        <option>En Proceso</option>
+                        <option>En Progreso</option>
                         <option>En Revisión</option>
                         <option>Cerrado</option>
                     </Form.Select>
@@ -184,8 +184,8 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
                     <Form.Control 
                         as="textarea"
                         rows={4}
-                        name="comentario"
-                        value={formData.comentario}
+                        name="comentarios"
+                        value={formData.comentarios}
                         onChange={handleChange}
                         placeholder="Ingresa tu comentario"
                     />

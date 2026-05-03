@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 import os
 from dotenv import load_dotenv
@@ -6,6 +6,7 @@ import openai
 import json
 from models.models import Consulta, Ticket, Login, Usuario, NuevoTicket
 from config import settings
+from websocket_manager import manager
 
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), 'client_secret_535675449174-m8c7a5hpgtihgnlslpi07jbi9er08s4v.apps.googleusercontent.com.json')
 if not os.path.exists(CREDENTIALS_PATH):
@@ -45,6 +46,53 @@ def ejecutarQueryMySQL(query):
     settings.DB_MYSQL.commit()
     cursor_mysql.close()
 
+async def notify_ticket_updated(ticket_id):
+    token_autor = ""
+    token_asignado = ""
+    resultado_ticket = ejecutarConsultaMySQL(f"SELECT * FROM tickets WHERE idtickets = '{ticket_id}'")
+    if not resultado_ticket:
+        raise HTTPException(status_code=401, detail="No se encontró el ticket")
+    else:
+        for resultado in resultado_ticket:
+            correo_autor = resultado[3]
+            id_asignado = resultado[4]
+            resultado_token_autor = ejecutarConsultaMySQL(f"SELECT token FROM usuarios WHERE correousuario = '{correo_autor}'")
+            if not resultado_token_autor:
+                raise HTTPException(status_code=401, detail="No se encontró el autor")
+            else:
+                token_autor = resultado_token_autor[0][0]
+            resultado_token_asignado = ejecutarConsultaMySQL(f"SELECT token FROM usuarios WHERE idusuarios = '{id_asignado}'")
+            if not resultado_token_asignado:
+                raise HTTPException(status_code=401, detail="No se encontró el asignado")
+            else:
+                token_autor = resultado_token_asignado[0][0]
+
+            print(token_asignado)
+            print(token_autor)
+            if (token_autor == token_asignado):
+                users = set([token_autor, token_asignado])
+
+                message = {
+                    "type": "ticket_updated",
+                    "ticket_id": resultado[0],
+                    "estado": resultado[5],
+                    "mensaje": f"Tu ticket '{resultado[1]}' fue actualizado"
+                }
+
+                for user_id in users:
+                    await manager.send_to_user(user_id, message)
+            else:
+                users = set([token_autor])
+
+                message = {
+                    "type": "ticket_updated",
+                    "ticket_id": resultado[0],
+                    "estado": resultado[5],
+                    "mensaje": f"Tu ticket '{resultado[1]}' fue actualizado"
+                }
+
+                for user_id in users:
+                    await manager.send_to_user(user_id, message)
 
 def obtener_ticket_IA(ticket_id):
     query = f"SELECT * FROM tickets WHERE id = {ticket_id}"
@@ -111,6 +159,19 @@ herramientas = [
     }
 ]
 
+@router.websocket("/ws/{access_token}")
+async def websocket_endpoint(websocket: WebSocket, access_token: str):
+    await manager.connect(access_token, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+    except WebSocketDisconnect:
+        print(f"Usuario desconectado: {access_token}")
+        manager.disconnect(access_token)
+    finally:
+        manager.disconnect(access_token) 
 
 @router.post("/inicio-sesion")
 async def inicio_sesion(login: Login):
@@ -191,6 +252,36 @@ async def crear_ticket(ticket: NuevoTicket, login: Login):
     query = f"INSERT INTO tickets (asunto, descripcion, autor, asignado_a, estado, prioridad, fechaCreacion, fechaActualizacion, comentarios, adjuntos) VALUES ('{ticket_data.get('asunto')}', '{ticket_data.get('descripcion')}', '{ticket_data.get('autor')}', '{ticket_data.get('asignado_a')}', '{ticket_data.get('estado')}', '{ticket_data.get('prioridad')}', '{ticket_data.get('fechaCreacion')}', '{ticket_data.get('fechaActualizacion')}', '{ticket_data.get('comentarios')}', '{ticket_data.get('adjuntos')}')"
     ejecutarQueryMySQL(query)
     return {"message": "Ticket creado exitosamente"}
+
+@router.put("/editar-ticket")
+async def editar_ticket(ticket: NuevoTicket, login: Login):
+    print(f"Intento de edición de ticket: {ticket} por usuario: {login}")
+    login_data = login.datos_usuario
+    ticket_data = ticket.ticket
+    if not login_data.get("user_email") or not login_data.get("accessToken"):
+        raise HTTPException(status_code=400, detail="Email y token son requeridos")
+    # Verificar que el usuario exista y el token sea válido
+    resultados_usuario = ejecutarConsultaMySQL(f"SELECT * FROM usuarios WHERE correousuario = '{login_data.get('user_email')}' AND token = '{login_data.get('accessToken')}'")
+    if not resultados_usuario:
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    query = f"UPDATE tickets SET asunto='{ticket_data.get('asunto')}', descripcion='{ticket_data.get('descripcion')}', autor='{ticket_data.get('autor')}', asignado_a='{ticket_data.get('asignado_a')}', estado='{ticket_data.get('estado')}', prioridad='{ticket_data.get('prioridad')}', fechaCreacion='{ticket_data.get('fechaCreacion')}', fechaActualizacion='{ticket_data.get('fechaActualizacion')}', comentarios='{ticket_data.get('comentarios')}', adjuntos='{ticket_data.get('adjuntos')}' WHERE idtickets={int(ticket_data.get('id'))}"
+    ejecutarQueryMySQL(query)
+    await notify_ticket_updated(int(ticket_data.get('id')))
+    return {"message": "Ticket creado exitosamente"}
+
+@router.put("/tickets/{ticket_id}/estado/{nuevo_estado}")
+async def actualizar_estado_ticket(ticket_id: int, nuevo_estado: str, login: Login):
+    login_data = login.datos_usuario
+    if not login_data.get("user_email") or not login_data.get("accessToken"):
+        raise HTTPException(status_code=400, detail="Email y token son requeridos")
+    # Verificar que el usuario exista y el token sea válido
+    resultados_usuario = ejecutarConsultaMySQL(f"SELECT * FROM usuarios WHERE correousuario = '{login_data.get('user_email')}' AND token = '{login_data.get('accessToken')}'")
+    if not resultados_usuario:
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    query = f"UPDATE tickets SET estado='{nuevo_estado}', fechaActualizacion=NOW() WHERE idtickets={ticket_id}"
+    ejecutarQueryMySQL(query)
+    await notify_ticket_updated(ticket_id)
+    return {"message": "Estado del ticket actualizado exitosamente"}
     
 @router.post("/upload-file")
 async def upload_file(file: UploadFile = File(...)):
@@ -214,19 +305,87 @@ async def chat(consulta: Consulta):
         # Crear generador para el streaming
         def generate():
             respuesta_completa = ""
-            stream = client.chat.completions.create(
+            
+            # Primera llamada al modelo (sin streaming) para detectar tool_calls
+            response = client.chat.completions.create(
                 model=MODEL_NAME, 
                 messages=historial_conversacion[usuario],
-                stream=True,  # Habilitar streaming
-                tools=herramientas  # Pasar las herramientas disponibles
+                tools=herramientas
             )
             
-            for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    contenido = chunk.choices[0].delta.content
-                    respuesta_completa += contenido
-                    print(contenido, end="", flush=True)  # Mostrar en consola a medida que llega
-                    yield f"data: {json.dumps({'chunk': contenido})}\n\n"
+            # Procesar si hay tool_calls
+            if response.choices[0].message.tool_calls:
+                # Agregar el mensaje con tool_calls al historial
+                historial_conversacion[usuario].append({
+                    "role": "assistant",
+                    "content": response.choices[0].message.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        }
+                        for tc in response.choices[0].message.tool_calls
+                    ]
+                })
+                
+                # Ejecutar cada herramienta
+                for tool_call in response.choices[0].message.tool_calls:
+                    tool_name = tool_call.function.name
+                    tool_args = json.loads(tool_call.function.arguments)
+                    
+                    print(f"Ejecutando herramienta: {tool_name} con args: {tool_args}")
+                    
+                    # Ejecutar la función correspondiente
+                    if tool_name == "obtener_ticket_IA":
+                        resultado = obtener_ticket_IA(tool_args.get("id"))
+                    elif tool_name == "obtener_tickets_IA":
+                        resultado = obtener_tickets_IA()
+                    elif tool_name == "crear_ticket_IA":
+                        resultado = crear_ticket_IA(
+                            tool_args.get("asunto"),
+                            tool_args.get("descripcion"),
+                            tool_args.get("autor")
+                        )
+                    else:
+                        resultado = "Función no reconocida"
+                    
+                    # Agregar el resultado al historial
+                    historial_conversacion[usuario].append({
+                        "role": "user",
+                        "content": f"Resultado de {tool_name}: {json.dumps(resultado, default=str)}"
+                    })
+                
+                # Segunda llamada al modelo para generar respuesta final CON STREAMING
+                final_response = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=historial_conversacion[usuario],
+                    stream=True
+                )
+                
+                for chunk in final_response:
+                    if chunk.choices[0].delta.content is not None:
+                        contenido = chunk.choices[0].delta.content
+                        respuesta_completa += contenido
+                        print(contenido, end="", flush=True)
+                        yield f"data: {json.dumps({'chunk': contenido})}\n\n"
+            else:
+                # Si no hay tool_calls, hacer streaming directamente CON STREAMING
+                stream = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=historial_conversacion[usuario],
+                    stream=True
+                )
+                
+                for chunk in stream:
+                    if chunk.choices[0].delta.content is not None:
+                        contenido = chunk.choices[0].delta.content
+                        respuesta_completa += contenido
+                        print(contenido, end="", flush=True)
+                        yield f"data: {json.dumps({'chunk': contenido})}\n\n"
             
             print()  # Salto de línea en consola
             # Guardar la respuesta completa en el historial

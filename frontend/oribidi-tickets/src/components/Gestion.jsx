@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import '../App.css'
 import Toast from 'react-bootstrap/Toast';
 import ToastContainer from 'react-bootstrap/ToastContainer';
 import Container from 'react-bootstrap/Container';
 import Navbar from 'react-bootstrap/Navbar';
 import Button from 'react-bootstrap/Button';
+import Badge from 'react-bootstrap/Badge';
 import Col from 'react-bootstrap/Col';
 import Row from 'react-bootstrap/Row';
 import Form from 'react-bootstrap/Form';
@@ -13,30 +14,79 @@ import Tooltip from 'react-bootstrap/Tooltip';
 import Modal from 'react-bootstrap/Modal';
 import ModalChat from "./ModalChat.jsx";
 import ModalTicket from "./ModalTicket.jsx";
+import Tab from 'react-bootstrap/Tab';
+import Tabs from 'react-bootstrap/Tabs';
+import DataTable from 'datatables.net-react';
+import DT from 'datatables.net-dt';
+import { DragDropContext, Droppable, Draggable} from "@hello-pangea/dnd";
+import AlertaAviso from '../assets/AlertaAviso.mp3';
+import AlertaChat from '../assets/AlertaChat.mp3';
+import Offcanvas from 'react-bootstrap/Offcanvas';
 
 function Gestion() {
   const [count, setCount] = useState(0)
   const [showToast, setShowToast] = useState(false);
   const [msgToast, setMsgToast] = useState('');
   const [colorToast, setColorToast] = useState('success');
+  const [posicionToast, setPosicionToast] = useState('top-end');
   const [userData, setUserData] = useState({});
   const [nuevosMensajes, setNuevosMensajes] = useState([]);
+  const [nuevosAlertas, setNuevosAlertas] = useState([]);
   const [mostrarChat, setMostrarChat] = useState(false);
+  const [mostrarAlertas, setMostrarAlertas] = useState(false);
   const [mostrarTicket, setMostrarTicket] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
+  const [isConnected, setIsConnected] = useState(false);
   const [ticketSeleccionado, setTicketSeleccionado] = useState(null);
+  const ticketsRef = useRef([]);
+  const estados = ["Abierto", "En progreso", "En revisión", "Cerrado"];
+  const audioAviso = new Audio(AlertaAviso);
+  const audioChat = new Audio(AlertaChat);
 
+  useEffect(() => {
+    ticketsRef.current = tickets;
+  }, [tickets]);
   const handleCloseChat = () => setMostrarChat(false);
+  const handleCloseAlertas = () => {setMostrarAlertas(false); setNuevosAlertas([]);};
   const handleCloseTicket = () => setMostrarTicket(false);
   const handleShowChat = () => {
     setMostrarChat(true);
     setNuevosMensajes([]);
   };
+  const handleShowAlertas = () => {
+    setMostrarAlertas(true);
+    // setNuevosAlertas([]);
+  };
   const handleShowTicket = (ticket) => {
-    setTicketSeleccionado(ticket);
+    //buscar el ticket en la lista de tickets por su id
+    const ticketEncontrado = tickets.find(t => t.id === Number(ticket));
+    console.log('Ticket seleccionado para edición:', ticketEncontrado);
+    setTicketSeleccionado(ticketEncontrado);
     setMostrarTicket(true);
   };
+
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (e.target.closest(".btn-edit")) {
+        const btn = e.target.closest(".btn-edit");
+        const id = btn.getAttribute("data-id");
+
+        const ticketEncontrado = ticketsRef.current.find(
+          t => t.id === Number(id)
+        );
+
+        setTicketSeleccionado(ticketEncontrado);
+        setMostrarTicket(true);
+      }
+    };
+
+    document.addEventListener("click", handleClick);
+
+    return () => {
+      document.removeEventListener("click", handleClick);
+    };
+  }, []);
 
   const validarSizeAdjuntos = (files) => {
     const maxSizeMB = 10;
@@ -62,7 +112,7 @@ function Gestion() {
   const handleSaveTicket = (ticketData) => {
     // Aquí recibes los datos del formulario del ModalTicket
     console.log('Datos del ticket:', ticketData);
-    if(ticketData.adjuntos) {
+    if(ticketData.adjuntos && ticketData.adjuntos !== "None") {
       console.log('Archivos adjuntos:', ticketData.adjuntos);
       if (ticketData.adjuntos && !validarSizeAdjuntos(ticketData.adjuntos) || !validarExtensionAdjuntos(ticketData.adjuntos)) {
         setMsgToast('Error: Uno o más archivos adjuntos no tienen una extensión válida o exceden el tamaño máximo de 10MB.');
@@ -94,33 +144,57 @@ function Gestion() {
       }
     }
     ticketData.autor = userData.user_email; // Asignar el autor del ticket como el usuario actual
-    // Ejemplo: puedes enviarlos a tu backend
-    fetch('http://127.0.0.1:8000/crear-ticket', {
-      method: ticketData.id ? 'PUT' : 'POST', // PUT si edita, POST si crea
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ 
-        ticket: {ticket: ticketData}, 
-        login: { datos_usuario: userData }
+    if (ticketData.id){
+      fetch('http://127.0.0.1:8000/editar-ticket', {
+        method: 'PUT', // PUT si edita, POST si crea
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          ticket: {ticket: ticketData}, 
+          login: { datos_usuario: userData }
+        })
       })
-    })
-    .then(response => response.json())
-    .then(data => {
-      if (ticketData.id) {
+      .then(response => response.json())
+      .then(data => {
         setMsgToast('Ticket actualizado exitosamente');
-      } else {
+        setColorToast('success');
+        setPosicionToast('top-end');
+        setShowToast(true);
+        endpointObtenerTickets(userData);
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        setMsgToast('Error al guardar el ticket: ' + error.message);
+        setColorToast('danger');
+        setShowToast(true);
+      });
+    }else{
+      fetch('http://127.0.0.1:8000/crear-ticket', {
+        method: 'POST', // PUT si edita, POST si crea
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          ticket: {ticket: ticketData}, 
+          login: { datos_usuario: userData }
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
         setMsgToast('Ticket creado exitosamente');
-      }
-      setColorToast('success');
-      setShowToast(true);
-    })
-    .catch(error => {
-      console.error('Error:', error);
-      setMsgToast('Error al guardar el ticket: ' + error.message);
-      setColorToast('danger');
-      setShowToast(true);
-    });
+        setColorToast('success');
+        setPosicionToast('top-end');
+        setShowToast(true);
+        endpointObtenerTickets(userData);
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        setMsgToast('Error al guardar el ticket: ' + error.message);
+        setColorToast('danger');
+        setShowToast(true);
+      });
+    }
   };
 
   function obtenerCookies() {
@@ -285,14 +359,75 @@ function Gestion() {
         endpointInicioSesion(objSesion);
         endpointObtenerUsuarios(objSesion);
         endpointObtenerTickets(objSesion);
+
+        const ws = new WebSocket(`ws://localhost:8000/ws/${objSesion.accessToken}`);
+          //Verificar conexión WebSocket
+          ws.onopen = () => {
+              console.log('Conexión WebSocket establecida');
+              setIsConnected(true);
+          };
+
+          ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === "ticket_assigned") {
+              // showNotification();
+            }
+
+            if (data.type === "ticket_updated" && data.autor !== userData.email) {
+              setNuevosAlertas((prevAlertas) => [...prevAlertas, data]);
+              audioAviso.play();
+              setMsgToast('Ticket actualizado: ' + data.mensaje);
+              setColorToast('warning');
+              setPosicionToast('bottom-end');
+              setShowToast(true);
+            }
+        };
+
+          ws.onerror = (error) => {
+              console.error('Error en WebSocket:', error);
+              setIsConnected(false);
+          };
+
+          ws.onclose = () => {
+              console.log('Conexión WebSocket cerrada');
+              setIsConnected(false);
+          };
     }
   }
+
+  DataTable.use(DT);
+
+  const onDragEnd = (result) => {
+    const { source, destination, draggableId } = result;
+
+    if (!destination) return;
+
+    // Si no cambió de columna
+    if (source.droppableId === destination.droppableId) return;
+
+    const ticketId = Number(draggableId);
+    const nuevoEstado = destination.droppableId;
+
+    // actualizar en frontend
+    const nuevosTickets = tickets.map(t =>
+      t.id === ticketId ? { ...t, estado: nuevoEstado } : t
+    );
+
+    setTickets(nuevosTickets);
+
+    // actualizar en backend
+    fetch(`http://127.0.0.1:8000/tickets/${ticketId}/estado/${nuevoEstado}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({datos_usuario: userData}) 
+    });
+  };
 
   return (
     <>
       <ToastContainer
         className="p-3"
-        position="top-end"
+        position={posicionToast}
         style={{ zIndex: 1050 }}
       >
         <Toast bg={colorToast} onClose={() => setShowToast(false)} show={showToast} delay={3000} autohide>
@@ -304,6 +439,17 @@ function Gestion() {
         </Toast>
       </ToastContainer>
 
+      <Offcanvas show={mostrarAlertas} onHide={handleCloseAlertas} placement='end'>
+        <Offcanvas.Header closeButton>
+          <Offcanvas.Title>Alertas</Offcanvas.Title>
+        </Offcanvas.Header>
+        <Offcanvas.Body>
+          {nuevosAlertas.map((alerta, index) => (
+            <p key={alerta.ticket_id}>{alerta.mensaje}</p>
+          ))}
+        </Offcanvas.Body>
+      </Offcanvas>
+
       <Navbar className="bg-body-tertiary" fixed="top" bg="primary" data-bs-theme="dark">
         <Container>
           <Navbar.Brand href="#perfil">
@@ -314,6 +460,12 @@ function Gestion() {
               className="d-inline-block align-right rounded-circle ms-2"
             />
           </Navbar.Brand>
+          <div style={{ 
+            width: '10px', 
+            height: '10px', 
+            backgroundColor: isConnected ? 'green' : 'red', 
+            borderRadius: '50%', 
+          }}></div>
           <Navbar.Toggle />
           <Navbar.Collapse className="justify-content-end">
             <Navbar.Text>
@@ -329,7 +481,14 @@ function Gestion() {
                 delay={{ show: 250, hide: 400 }}
                 overlay={<Tooltip id="button-tooltip-2">Alertas</Tooltip>}
               >
-                <Button variant="warning"><i className="fa-solid fa-bell"></i></Button>
+                <Button variant="warning" onClick={handleShowAlertas}>
+                  <i className="fa-solid fa-bell"></i>
+                  {nuevosAlertas.length > 0 && (
+                    <Badge bg="secondary" text="dark">
+                      {nuevosAlertas.length}
+                    </Badge>
+                  )}
+                </Button>
               </OverlayTrigger>
             </Col>
             <Col xs="auto">
@@ -346,6 +505,112 @@ function Gestion() {
           </Row>
         </Form>
       </Navbar>
+
+      <div style={{marginTop: "5em", marginBottom: "50em"}}>
+
+        <Tabs
+          defaultActiveKey="tabla"
+          id="uncontrolled-tab-example"
+          className="mb-3"
+          justify
+        >
+          <Tab eventKey="tabla" title="Tabla">
+            <DataTable
+              key={JSON.stringify(tickets)}
+              data={tickets}
+              className="display"
+              columns={[
+                { title: "ID", data: 'id' },
+                { title: "Asunto", data: 'asunto' },
+                { title: "Autor", data: 'autor' },
+                { title: "Estado", data: 'estado' },
+                { title: "Prioridad", data: 'prioridad' },
+                { 
+                  title: "Fecha de creación", 
+                  data: 'fechaCreacion',
+                  render: (data) => new Date(data).toLocaleString()
+                },
+                { 
+                  title: "Fecha de actualización", 
+                  data: 'fechaActualizacion',
+                  render: (data) => new Date(data).toLocaleString()
+                },
+                {
+                  title: "Editar",
+                  data: null,
+                  render: (data, type, row) => {
+                    return `<button class="btn btn-primary btn-edit" data-id="${row.id}">
+                              <i class="fa-solid fa-pen-to-square"></i>
+                            </button>`;
+                  }
+                },
+                // {
+                //   title: "Eliminar",
+                //   data: null,
+                //   render: () => `<button class="btn btn-danger" onclick={handleDeleteTicket}><i class="fa-solid fa-trash"></i></button>`
+                // }
+              ]}
+            />
+          </Tab>
+          <Tab eventKey="kanban" title="Kanban">
+            <DragDropContext onDragEnd={onDragEnd}>
+              <div style={{ display: "flex", gap: "20px" }}>
+                {estados.map((estado) => (
+                  <Droppable droppableId={estado} key={estado}>
+                    {(provided) => (
+                      <div
+                        ref={provided.innerRef}
+                        {...provided.droppableProps}
+                        style={{
+                          background: "linear-gradient(45deg, #000608, #2a3f54) !important",
+                          padding: "10px",
+                          width: "250px",
+                          minHeight: "400px"
+                        }}
+                      >
+                        <h4>{estado}</h4>
+
+                        {tickets
+                          .filter(t => t.estado === estado)
+                          .map((ticket, index) => (
+                            <Draggable
+                              key={ticket.id}
+                              draggableId={ticket.id.toString()}
+                              index={index}
+                            >
+                              {(provided) => (
+                                <div
+                                  ref={provided.innerRef}
+                                  {...provided.draggableProps}
+                                  {...provided.dragHandleProps}
+                                  style={{
+                                    padding: "10px",
+                                    margin: "10px 0",
+                                    borderRadius: "5px",
+                                    borderColor: "#0dcaf0",
+                                    borderWidth: "2px",
+                                    borderStyle: "solid",
+                                    ...provided.draggableProps.style
+                                  }}
+                                >
+                                  <strong>{ticket.asunto}</strong>
+                                  <p>{ticket.prioridad}</p>
+                                </div>
+                              )}
+                            </Draggable>
+                          ))}
+
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                ))}
+              </div>
+            </DragDropContext>
+          </Tab>
+        </Tabs>
+
+      </div>
 
       <Navbar className="bg-body-tertiary" fixed="bottom" bg="primary" data-bs-theme="dark">
         <Container>
