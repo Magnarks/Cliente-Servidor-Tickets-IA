@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 import os
 from dotenv import load_dotenv
@@ -7,6 +7,10 @@ import json
 from models.models import Consulta, Ticket, Login, Usuario, NuevoTicket
 from config import settings
 from websocket_manager import manager
+import uuid
+import shutil
+from typing import List
+from pathlib import Path
 
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), 'client_secret_535675449174-m8c7a5hpgtihgnlslpi07jbi9er08s4v.apps.googleusercontent.com.json')
 if not os.path.exists(CREDENTIALS_PATH):
@@ -31,6 +35,9 @@ historial_conversacion = {}
 
 router = APIRouter()
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+UPLOAD_DIR = BASE_DIR / "uploads"
+
 def ejecutarConsultaMySQL(query):
     #Cursor para ejecutar consultas en MySQL
     cursor_mysql = settings.DB_MYSQL.cursor()
@@ -40,11 +47,59 @@ def ejecutarConsultaMySQL(query):
     cursor_mysql.close()
     return resultados
 
-def ejecutarQueryMySQL(query):
+def ejecutarQueryMySQL(query, operacion = "UPDATE"):
     cursor_mysql = settings.DB_MYSQL.cursor()
     cursor_mysql.execute(query)
+    if(operacion == "INSERT"):
+        insert_id = cursor_mysql.lastrowid
     settings.DB_MYSQL.commit()
     cursor_mysql.close()
+    if(operacion == "INSERT"):
+        return insert_id
+    else:
+        return
+
+async def notify_ticket_created(ticket, ticket_id):
+    token_autor = ""
+    token_asignado = ""
+    resultado_token_autor = ejecutarConsultaMySQL(f"SELECT token FROM usuarios WHERE correousuario = '{ticket.get("autor")}'")
+    if not resultado_token_autor:
+        raise HTTPException(status_code=401, detail="No se encontró el autor")
+    else:
+        token_autor = resultado_token_autor[0][0]
+    resultado_token_asignado = ejecutarConsultaMySQL(f"SELECT token FROM usuarios WHERE idusuarios = '{ticket.get("asignado_a")}'")
+    if not resultado_token_asignado:
+        raise HTTPException(status_code=401, detail="No se encontró el asignado")
+    else:
+        token_autor = resultado_token_asignado[0][0]
+
+    print(token_asignado)
+    print(token_autor)
+    if (token_autor == token_asignado):
+        users = set([token_autor, token_asignado])
+
+        message = {
+            "type": "ticket_created",
+            "ticket_id": ticket_id,
+            "estado": ticket.get("estado"),
+            "mensaje": f"Se ha creado el ticket '{ticket.get("asunto")}' y fue asignado a este"
+        }
+
+        for user_id in users:
+            await manager.send_to_user(user_id, message)
+    else:
+        users = set([token_autor])
+
+        message = {
+            "type": "ticket_created",
+            "ticket_id": "",
+            "estado":  ticket.get("estado"),
+            "mensaje": f"Se ha creado el ticket '{ticket.get("asunto")}' y fue asignado a este"
+        }
+
+        for user_id in users:
+            await manager.send_to_user(user_id, message)
+
 
 async def notify_ticket_updated(ticket_id):
     token_autor = ""
@@ -67,8 +122,6 @@ async def notify_ticket_updated(ticket_id):
             else:
                 token_autor = resultado_token_asignado[0][0]
 
-            print(token_asignado)
-            print(token_autor)
             if (token_autor == token_asignado):
                 users = set([token_autor, token_asignado])
 
@@ -95,7 +148,7 @@ async def notify_ticket_updated(ticket_id):
                     await manager.send_to_user(user_id, message)
 
 def obtener_ticket_IA(ticket_id):
-    query = f"SELECT * FROM tickets WHERE id = {ticket_id}"
+    query = f"SELECT * FROM tickets WHERE idtickets = {int(ticket_id)}"
     resultados = ejecutarConsultaMySQL(query)
     if resultados:
         return resultados[0]  # Retorna el primer resultado encontrado
@@ -109,8 +162,8 @@ def obtener_tickets_IA():
 
 def crear_ticket_IA(asunto, descripcion, autor):
     query = f"INSERT INTO tickets (asunto, descripcion, autor) VALUES ('{asunto}', '{descripcion}', '{autor}')"
-    ejecutarQueryMySQL(query)
-    return "Ticket creado exitosamente"
+    id_ticket = ejecutarQueryMySQL(query, "INSERT")
+    return f"Ticket creado exitosamente {id_ticket}"
 
 herramientas = [
     {
@@ -182,8 +235,8 @@ async def inicio_sesion(login: Login):
     resultados = ejecutarConsultaMySQL(f"SELECT * FROM usuarios WHERE correousuario = '{login_data.get('user_email')}'")
     if not resultados:
         query = f"INSERT INTO usuarios (nombreusuario, correousuario, avatarusuario, token, expiracion_token, permisos, ultimo_logeo) VALUES ('{login_data.get('user_name')}', '{login_data.get('user_email')}', '{login_data.get('user_picture')}', '{login_data.get('accessToken')}', '{login_data.get('expiresIn')}', '{login_data.get('scope')}', '{login_data.get('fecha_sesion')}')"
-        ejecutarQueryMySQL(query)
-        return {"message": "Inicio de sesión exitoso"}
+        id_usuario = ejecutarQueryMySQL(query, "INSERT")
+        return {"message": f"Inicio de sesión exitoso, {id_usuario}"}
     else:
         query = f"UPDATE usuarios SET token='{login_data.get('accessToken')}', expiracion_token='{login_data.get('expiresIn')}', ultimo_logeo='{login_data.get('fecha_sesion')}', avatarusuario='{login_data.get('user_picture')}', nombreusuario='{login_data.get('user_name')}' WHERE correousuario='{login_data.get('user_email')}'"
         ejecutarQueryMySQL(query)
@@ -249,9 +302,19 @@ async def crear_ticket(ticket: NuevoTicket, login: Login):
     resultados_usuario = ejecutarConsultaMySQL(f"SELECT * FROM usuarios WHERE correousuario = '{login_data.get('user_email')}' AND token = '{login_data.get('accessToken')}'")
     if not resultados_usuario:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    query = f"INSERT INTO tickets (asunto, descripcion, autor, asignado_a, estado, prioridad, fechaCreacion, fechaActualizacion, comentarios, adjuntos) VALUES ('{ticket_data.get('asunto')}', '{ticket_data.get('descripcion')}', '{ticket_data.get('autor')}', '{ticket_data.get('asignado_a')}', '{ticket_data.get('estado')}', '{ticket_data.get('prioridad')}', '{ticket_data.get('fechaCreacion')}', '{ticket_data.get('fechaActualizacion')}', '{ticket_data.get('comentarios')}', '{ticket_data.get('adjuntos')}')"
-    ejecutarQueryMySQL(query)
-    return {"message": "Ticket creado exitosamente"}
+    if ticket_data.get('comentarios') is not None:
+        comentarios_guardados = []
+        comentarios_guardados.append({
+            "autor": ticket_data.get('autor'),
+            "fecha": ticket_data.get('fechaCreacion'),
+            "comentario": ticket_data.get('comentarios')
+        })
+        query = f"INSERT INTO tickets (asunto, descripcion, autor, asignado_a, estado, prioridad, fechaCreacion, fechaActualizacion, comentarios, adjuntos) VALUES ('{ticket_data.get('asunto')}', '{ticket_data.get('descripcion')}', '{ticket_data.get('autor')}', '{ticket_data.get('asignado_a')}', '{ticket_data.get('estado')}', '{ticket_data.get('prioridad')}', '{ticket_data.get('fechaCreacion')}', '{ticket_data.get('fechaActualizacion')}', '{json.dumps(comentarios_guardados)}', '[]')"
+    else:
+        query = f"INSERT INTO tickets (asunto, descripcion, autor, asignado_a, estado, prioridad, fechaCreacion, fechaActualizacion, comentarios, adjuntos) VALUES ('{ticket_data.get('asunto')}', '{ticket_data.get('descripcion')}', '{ticket_data.get('autor')}', '{ticket_data.get('asignado_a')}', '{ticket_data.get('estado')}', '{ticket_data.get('prioridad')}', '{ticket_data.get('fechaCreacion')}', '{ticket_data.get('fechaActualizacion')}', '[]', '[]')"
+    id_ticket = ejecutarQueryMySQL(query, "INSERT")
+    notify_ticket_created(ticket_data, id_ticket)
+    return {"id_ticket": id_ticket, "message": f"Ticket #{id_ticket} creado exitosamente"}
 
 @router.put("/editar-ticket")
 async def editar_ticket(ticket: NuevoTicket, login: Login):
@@ -264,7 +327,23 @@ async def editar_ticket(ticket: NuevoTicket, login: Login):
     resultados_usuario = ejecutarConsultaMySQL(f"SELECT * FROM usuarios WHERE correousuario = '{login_data.get('user_email')}' AND token = '{login_data.get('accessToken')}'")
     if not resultados_usuario:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    query = f"UPDATE tickets SET asunto='{ticket_data.get('asunto')}', descripcion='{ticket_data.get('descripcion')}', autor='{ticket_data.get('autor')}', asignado_a='{ticket_data.get('asignado_a')}', estado='{ticket_data.get('estado')}', prioridad='{ticket_data.get('prioridad')}', fechaCreacion='{ticket_data.get('fechaCreacion')}', fechaActualizacion='{ticket_data.get('fechaActualizacion')}', comentarios='{ticket_data.get('comentarios')}', adjuntos='{ticket_data.get('adjuntos')}' WHERE idtickets={int(ticket_data.get('id'))}"
+    if ticket_data.get('comentarios') is not None:
+        comentarios_guardados = []
+        comentarios_guardados.append({
+            "autor": ticket_data.get('autor'),
+            "fecha": ticket_data.get('fechaActualizacion'),
+            "comentario": ticket_data.get('comentarios')
+        })
+        resultados_comentarios = ejecutarConsultaMySQL(f"SELECT comentarios FROM tickets WHERE idtickets={int(ticket_data.get('id'))}")
+        if not resultados_comentarios:
+            query = f"UPDATE tickets SET asunto='{ticket_data.get('asunto')}', descripcion='{ticket_data.get('descripcion')}', autor='{ticket_data.get('autor')}', asignado_a='{ticket_data.get('asignado_a')}', estado='{ticket_data.get('estado')}', prioridad='{ticket_data.get('prioridad')}', fechaCreacion='{ticket_data.get('fechaCreacion')}', fechaActualizacion='{ticket_data.get('fechaActualizacion')}', comentarios='{json.dumps(comentarios_guardados)}' WHERE idtickets={int(ticket_data.get('id'))}"
+            ejecutarQueryMySQL(query)
+        else:
+            comentarios_guardados.extend(json.loads(resultados_comentarios[0][0]))
+            query = f"UPDATE tickets SET asunto='{ticket_data.get('asunto')}', descripcion='{ticket_data.get('descripcion')}', autor='{ticket_data.get('autor')}', asignado_a='{ticket_data.get('asignado_a')}', estado='{ticket_data.get('estado')}', prioridad='{ticket_data.get('prioridad')}', fechaCreacion='{ticket_data.get('fechaCreacion')}', fechaActualizacion='{ticket_data.get('fechaActualizacion')}', comentarios='{json.dumps(comentarios_guardados)}' WHERE idtickets={int(ticket_data.get('id'))}"
+            ejecutarQueryMySQL(query)
+    else:
+        query = f"UPDATE tickets SET asunto='{ticket_data.get('asunto')}', descripcion='{ticket_data.get('descripcion')}', autor='{ticket_data.get('autor')}', asignado_a='{ticket_data.get('asignado_a')}', estado='{ticket_data.get('estado')}', prioridad='{ticket_data.get('prioridad')}', fechaCreacion='{ticket_data.get('fechaCreacion')}', fechaActualizacion='{ticket_data.get('fechaActualizacion')}' WHERE idtickets={int(ticket_data.get('id'))}"
     ejecutarQueryMySQL(query)
     await notify_ticket_updated(int(ticket_data.get('id')))
     return {"message": "Ticket creado exitosamente"}
@@ -283,11 +362,43 @@ async def actualizar_estado_ticket(ticket_id: int, nuevo_estado: str, login: Log
     await notify_ticket_updated(ticket_id)
     return {"message": "Estado del ticket actualizado exitosamente"}
     
-@router.post("/upload-file")
-async def upload_file(file: UploadFile = File(...)):
-    if not file:
-        raise HTTPException(status_code=400, detail="No file uploaded")
-    return {"filename": file.filename}
+@router.post("/tickets/{ticket_id}/subir-adjuntos")
+async def upload_file(ticket_id: int, files: List[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+
+    archivos_guardados = []
+
+    for file in files:
+        # 🧠 nombre único
+        extension = file.filename.split(".")[-1]
+        unique_filename = f"{uuid.uuid4()}.{extension}"
+        ticket_folder = UPLOAD_DIR / str(ticket_id)
+        ticket_folder.mkdir(parents=True, exist_ok=True)
+
+        file_path = ticket_folder / unique_filename
+
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        archivos_guardados.append({
+            "original": file.filename,
+            "guardado": unique_filename,
+            "url": f"/uploads/{ticket_id}/{unique_filename}"
+        })
+
+    resultados_adjuntos = ejecutarConsultaMySQL(f"SELECT adjuntos FROM tickets WHERE idtickets={ticket_id}")
+    if not resultados_adjuntos:
+        query = f"UPDATE tickets SET adjuntos='{json.dumps(archivos_guardados)}' WHERE idtickets={ticket_id}"
+        ejecutarQueryMySQL(query)
+    else:
+        archivos_guardados.extend(json.loads(resultados_adjuntos[0][0]))
+        query = f"UPDATE tickets SET adjuntos='{json.dumps(archivos_guardados)}' WHERE idtickets={ticket_id}"
+        ejecutarQueryMySQL(query)
+    return {
+        "message": "Archivos subidos correctamente",
+        "files": archivos_guardados
+    }
 
 @router.post("/chat")
 async def chat(consulta: Consulta):

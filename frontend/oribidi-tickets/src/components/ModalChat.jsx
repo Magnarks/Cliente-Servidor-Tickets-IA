@@ -1,5 +1,7 @@
 import { Modal, Button, Form, ListGroup } from "react-bootstrap";
 import { useState, useContext, useEffect } from "react";
+import ReactMarkdown from 'react-markdown';
+import AlertaChat from '../assets/AlertaChat.mp3';
 
 function ChatModal({ show, handleClose, usuario }) {
   const [mensaje, setMensaje] = useState("");
@@ -8,6 +10,7 @@ function ChatModal({ show, handleClose, usuario }) {
   const [mensajeDataBot, setMensajeDataBot] = useState({});
   const [botPartialMessage, setBotPartialMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const audioChat = new Audio(AlertaChat);
 
   useEffect(() => {
     if (mensajeData) {
@@ -78,9 +81,10 @@ function ChatModal({ show, handleClose, usuario }) {
                 if (jsonData.done) {
                   //console.log("Respuesta completada");
                   // Agregar mensaje final a la lista
-                  setMessages(prevMessages => [...prevMessages, { sender: "Bot 🤖", text: respuestaCompleta }]);
+                  setMessages(prevMessages => [...prevMessages, { sender: "Bot 🤖", text: <ReactMarkdown>{respuestaCompleta}</ReactMarkdown> }]);
                   setBotPartialMessage("");
                   setIsLoading(false);
+                  audioChat.play();
                 } else if (jsonData.chunk) {
                   respuestaCompleta += jsonData.chunk;
                   // Actualizar el mensaje parcial en tiempo real
@@ -148,7 +152,7 @@ function ChatModal({ show, handleClose, usuario }) {
               )}
               {botPartialMessage && (
                 <ListGroup.Item variant="info">
-                  Bot 🤖: {botPartialMessage}
+                  Bot 🤖: <ReactMarkdown>{botPartialMessage}</ReactMarkdown>
                 </ListGroup.Item>
               )}
             </ListGroup>

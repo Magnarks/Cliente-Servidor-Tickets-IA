@@ -20,7 +20,6 @@ import DataTable from 'datatables.net-react';
 import DT from 'datatables.net-dt';
 import { DragDropContext, Droppable, Draggable} from "@hello-pangea/dnd";
 import AlertaAviso from '../assets/AlertaAviso.mp3';
-import AlertaChat from '../assets/AlertaChat.mp3';
 import Offcanvas from 'react-bootstrap/Offcanvas';
 
 function Gestion() {
@@ -42,7 +41,6 @@ function Gestion() {
   const ticketsRef = useRef([]);
   const estados = ["Abierto", "En progreso", "En revisión", "Cerrado"];
   const audioAviso = new Audio(AlertaAviso);
-  const audioChat = new Audio(AlertaChat);
 
   useEffect(() => {
     ticketsRef.current = tickets;
@@ -61,7 +59,6 @@ function Gestion() {
   const handleShowTicket = (ticket) => {
     //buscar el ticket en la lista de tickets por su id
     const ticketEncontrado = tickets.find(t => t.id === Number(ticket));
-    console.log('Ticket seleccionado para edición:', ticketEncontrado);
     setTicketSeleccionado(ticketEncontrado);
     setMostrarTicket(true);
   };
@@ -76,7 +73,17 @@ function Gestion() {
           t => t.id === Number(id)
         );
 
-        setTicketSeleccionado(ticketEncontrado);
+        const ticketProcesado = {
+          ...ticketEncontrado,
+          adjuntos: ticketEncontrado.adjuntos !== "[]"
+            ? JSON.parse(ticketEncontrado.adjuntos)
+            : [],
+          comentariosJson: ticketEncontrado.comentarios !== "[]"
+            ? JSON.parse(ticketEncontrado.comentarios)
+            : []
+        };
+
+        setTicketSeleccionado(ticketProcesado);
         setMostrarTicket(true);
       }
     };
@@ -112,37 +119,6 @@ function Gestion() {
   const handleSaveTicket = (ticketData) => {
     // Aquí recibes los datos del formulario del ModalTicket
     console.log('Datos del ticket:', ticketData);
-    if(ticketData.adjuntos && ticketData.adjuntos !== "None") {
-      console.log('Archivos adjuntos:', ticketData.adjuntos);
-      if (ticketData.adjuntos && !validarSizeAdjuntos(ticketData.adjuntos) || !validarExtensionAdjuntos(ticketData.adjuntos)) {
-        setMsgToast('Error: Uno o más archivos adjuntos no tienen una extensión válida o exceden el tamaño máximo de 10MB.');
-        setColorToast('danger');
-        setShowToast(true);
-        return;
-      }else{
-        // Guardar adjuntos en el backend
-        if (ticketData.adjuntos) {
-          const formData = new FormData();
-          for (let i = 0; i < ticketData.adjuntos.length; i++) {
-            formData.append('adjuntos', ticketData.adjuntos[i]);
-          }
-          fetch('http://127.0.0.1:8000/subir-adjuntos', {
-            method: 'POST',
-            body: formData
-          })
-          .then(response => response.json())
-          .then(data => {
-            // Procesar la respuesta del backend
-          })
-          .catch(error => {
-            console.error('Error al subir adjuntos:', error);
-            setMsgToast('Error al subir adjuntos: ' + error.message);
-            setColorToast('danger');
-            setShowToast(true);
-          });
-        }
-      }
-    }
     ticketData.autor = userData.user_email; // Asignar el autor del ticket como el usuario actual
     if (ticketData.id){
       fetch('http://127.0.0.1:8000/editar-ticket', {
@@ -157,6 +133,8 @@ function Gestion() {
       })
       .then(response => response.json())
       .then(data => {
+        ticketData.edicion = true;
+        subirAnexosTicket(ticketData)
         setMsgToast('Ticket actualizado exitosamente');
         setColorToast('success');
         setPosicionToast('top-end');
@@ -182,6 +160,9 @@ function Gestion() {
       })
       .then(response => response.json())
       .then(data => {
+        ticketData.edicion = false;
+        ticketData.id = data.id_ticket
+        subirAnexosTicket(ticketData)
         setMsgToast('Ticket creado exitosamente');
         setColorToast('success');
         setPosicionToast('top-end');
@@ -196,6 +177,40 @@ function Gestion() {
       });
     }
   };
+
+  function subirAnexosTicket(ticketData){
+    if(ticketData.adjuntos.length > 0) {
+      console.log('Archivos adjuntos:', ticketData.adjuntos);
+      if (ticketData.adjuntos.length > 0 && !validarSizeAdjuntos(ticketData.adjuntos) || !validarExtensionAdjuntos(ticketData.adjuntos)) {
+        setMsgToast('Error: Uno o más archivos adjuntos no tienen una extensión válida o exceden el tamaño máximo de 10MB.');
+        setColorToast('danger');
+        setShowToast(true);
+        return;
+      }else{
+        // Guardar adjuntos en el backend
+        if (ticketData.adjuntos.length > 0) {
+          const formData = new FormData();
+          for (let i = 0; i < ticketData.adjuntos.length; i++) {
+            formData.append('files', ticketData.adjuntos[i]);
+          }
+          fetch(`http://127.0.0.1:8000/tickets/${ticketData.id}/subir-adjuntos`, {
+            method: 'POST',
+            body: formData
+          })
+          .then(response => response.json())
+          .then(data => {
+            // Procesar la respuesta del backend
+          })
+          .catch(error => {
+            console.error('Error al subir adjuntos:', error);
+            setMsgToast('Error al subir adjuntos: ' + error.message);
+            setColorToast('danger');
+            setShowToast(true);
+          });
+        }
+      }
+    }
+  }
 
   function obtenerCookies() {
     if(count === 0){
@@ -369,11 +384,16 @@ function Gestion() {
 
           ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            if (data.type === "ticket_assigned") {
-              // showNotification();
+            if (data.type === "ticket_created") {
+              setNuevosAlertas((prevAlertas) => [...prevAlertas, data]);
+              audioAviso.play();
+              setMsgToast('Ticket asignado: ' + data.mensaje);
+              setColorToast('warning');
+              setPosicionToast('bottom-end');
+              setShowToast(true);
             }
 
-            if (data.type === "ticket_updated" && data.autor !== userData.email) {
+            if (data.type === "ticket_updated") { //&& data.autor !== userData.email
               setNuevosAlertas((prevAlertas) => [...prevAlertas, data]);
               audioAviso.play();
               setMsgToast('Ticket actualizado: ' + data.mensaje);
@@ -643,6 +663,11 @@ function Gestion() {
               >
                 <Button variant="info" title='Chat' style={{marginRight: "50px"}} onClick={handleShowChat}>
                   <i className="fa-solid fa-message"></i>
+                  {nuevosMensajes.length > 0 && (
+                    <Badge bg="warning" text="dark">
+                      {nuevosMensajes.length}
+                    </Badge>
+                  )}
                 </Button>
               </OverlayTrigger>
             </Col>

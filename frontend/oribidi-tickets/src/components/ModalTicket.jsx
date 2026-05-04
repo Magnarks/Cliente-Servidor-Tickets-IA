@@ -3,12 +3,14 @@ import Modal from 'react-bootstrap/Modal';
 import Form from 'react-bootstrap/Form';
 import Toast from 'react-bootstrap/Toast';
 import ToastContainer from 'react-bootstrap/ToastContainer';
+import Table from 'react-bootstrap/Table';
 import { useState, useEffect } from 'react';
 
 function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
   const [showToast, setShowToast] = useState(false);
   const [msgToast, setMsgToast] = useState('');
   const [colorToast, setColorToast] = useState('success');
+  const [adjuntos, setAdjuntos] = useState([]);
 
   const [formData, setFormData] = useState({
     id: '',
@@ -26,6 +28,7 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
   useEffect(() => {
     if (isEditing && ticket) {
       // Modo edición: llenar con datos del ticket
+      ticket.comentarios = ''
       setFormData(ticket);
     } else {
       // Modo creación: limpiar formulario
@@ -36,6 +39,7 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
         estado: 'Abierto',
         prioridad: 'Media',
         asignado_a: usuarios.length > 0 ? usuarios[0].id : '',
+        comentarios: '',
         fechaCreacion: new Date().toISOString().slice(0, 19).replace('T', ' '),
         fechaActualizacion: new Date().toISOString().slice(0, 19).replace('T', ' ')
       });
@@ -60,10 +64,15 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
     }
 
     if (onSave) {
+      formData.adjuntos = adjuntos;
       onSave(formData);
     }
     handleClose();
   };
+
+  function eliminarArchivo() {
+    console.error()
+  }
 
   return (
     <>
@@ -117,16 +126,32 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
                 />
                 </Form.Group>
 
-                <Form.Group className="mb-3">
-                <Form.Label style={{ color: "white" }}><strong>Autor</strong></Form.Label>
-                    <img
-                        src={usuario.user_picture}
-                        width="40"
-                        height="40"
-                        className="d-inline-block align-right rounded-circle ms-2"
-                    />
-                <Form.Label style={{ color: "white", marginLeft: "10px" }}><strong>{usuario.user_name + " (" + usuario.user_email + ")" || ""}</strong></Form.Label>
-                </Form.Group>
+                {!isEditing && (
+                    <Form.Group className="mb-3">
+                    <Form.Label style={{ color: "white" }}><strong>Autor</strong></Form.Label>
+                        <img
+                            src={usuario.user_picture}
+                            width="40"
+                            height="40"
+                            className="d-inline-block align-right rounded-circle ms-2"
+                        />
+                    <Form.Label style={{ color: "white", marginLeft: "10px" }}><strong>{usuario.user_name + " (" + usuario.user_email + ")" || ""}</strong></Form.Label>
+                    </Form.Group> 
+                )};
+
+                {isEditing && (
+                    <Form.Group className="mb-3">
+                    <Form.Label style={{ color: "white" }}><strong>Autor</strong></Form.Label>
+                        {/* <img
+                            src={formData.user_picture}
+                            width="40"
+                            height="40"
+                            className="d-inline-block align-right rounded-circle ms-2"
+                        /> */}
+                    <Form.Label style={{ color: "white", marginLeft: "10px" }}><strong>{formData.autor }</strong></Form.Label>
+                    </Form.Group> 
+                )};
+
 
                 <Form.Group className="mb-3">
                     <Form.Label style={{ color: "white" }}><strong>Asignar a</strong></Form.Label>
@@ -178,17 +203,39 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
                 </div>
                 </div>
                  
+                <Form.Group className="mb-3">
+                <Form.Label style={{ color: "white" }}><strong>Agregar Comentario</strong></Form.Label>
+                <Form.Control 
+                    as="textarea"
+                    rows={4}
+                    name="comentarios"
+                    value={formData.comentarios}
+                    onChange={handleChange}
+                    placeholder="Ingresa tu comentario"
+                />
+                </Form.Group>
+
                 {isEditing && (
                     <Form.Group className="mb-3">
-                    <Form.Label style={{ color: "white" }}><strong>Comentario</strong></Form.Label>
-                    <Form.Control 
-                        as="textarea"
-                        rows={4}
-                        name="comentarios"
-                        value={formData.comentarios}
-                        onChange={handleChange}
-                        placeholder="Ingresa tu comentario"
-                    />
+                    <Form.Label style={{ color: "white" }}><strong>Comentarios</strong></Form.Label>
+                    <Table striped bordered hover responsive> 
+                        <thead>
+                            <tr>
+                            <th>Autor</th>
+                            <th>Fecha</th>
+                            <th>Comentario</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {Array.isArray(formData.comentariosJson) && formData.comentariosJson.map((valor, index) => (
+                            <tr key={index}>
+                                <td>{valor.autor}</td>
+                                <td>{new Date(valor.fecha).toLocaleString()}</td>
+                                <td>{valor.comentario}</td>
+                            </tr>
+                            ))}
+                        </tbody>
+                    </Table>
                     </Form.Group>
                 )}
 
@@ -216,8 +263,68 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
                         type="file" 
                         multiple 
                         accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx"
+                        onChange={(e) => {
+                            setAdjuntos(e.target.files);
+                            console.log("Archivos seleccionados:", e.target.files);
+                        }}
                     />
                 </Form.Group>
+
+                {isEditing && (            
+                    <Table striped bordered hover>
+                        <thead>
+                            <tr>
+                            <th>Nombre</th>
+                            <th>Ver</th>
+                            <th>Descargar</th>
+                            <th>Eliminar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {Array.isArray(formData.adjuntos) && formData.adjuntos.map((file, index) => (
+                            <tr key={index}>
+                                <td>{file.original}</td>
+                                <td>
+                                    <a 
+                                        href={`http://127.0.0.1:8000${file.url}`} 
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        title="Ver archivo"
+                                    >
+                                        <i 
+                                        className="fa-solid fa-eye" 
+                                        style={{ color: "rgb(116, 192, 252)", cursor: "pointer" }}
+                                        ></i>
+                                    </a>
+                                </td>
+                                <td>
+                                    <a 
+                                        href={`http://127.0.0.1:8000${file.url}`} 
+                                        download
+                                        title="Descargar archivo"
+                                    >
+                                        <i 
+                                        className="fa-solid fa-download" 
+                                        style={{ color: "rgb(99, 230, 190)", cursor: "pointer" }}
+                                        ></i>
+                                    </a>
+                                </td>
+                                <td>
+                                    <a 
+                                        title="Eliminar archivo"
+                                        onClick={eliminarArchivo}
+                                    >
+                                        <i 
+                                        className="fa-solid fa-trash" 
+                                        style={{ color: "rgb(255, 59, 59)", cursor: "pointer" }}
+                                        ></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            ))}
+                        </tbody>
+                    </Table>
+                )}
             </Form>
             </Modal.Body>
             <Modal.Footer>

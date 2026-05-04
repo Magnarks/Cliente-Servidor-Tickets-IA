@@ -1,7 +1,9 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from routes.routes import router
 import uvicorn
+from pathlib import Path
 
 app = FastAPI(
     title="Orbidi API",
@@ -18,6 +20,11 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+BASE_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = BASE_DIR / "uploads"
+
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 @app.get("/health")
 async def health_check():

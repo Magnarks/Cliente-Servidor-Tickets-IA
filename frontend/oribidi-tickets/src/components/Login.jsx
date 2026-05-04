@@ -100,7 +100,7 @@ function Login() {
     var params = {'client_id': import.meta.env.VITE_APP_GOOGLE_API_KEY,
                   'redirect_uri': 'http://localhost:5173/',
                   'response_type': 'token',
-                  'scope': 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile openid',
+                  'scope': 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile openid',
                   'include_granted_scopes': 'true',
                   'state': 'pass-through value'};
 
@@ -120,11 +120,11 @@ function Login() {
 
   return (
     <>
-      <div className="Login">
-        <img src={reactLogo} className="logo" alt="React logo" style={{ width: '100px' }} />
-        <h1 style={{ color: 'white' }}>Inicio de sesión</h1>
+      <div className="Login" style={{ marginTop: '25em' }}>
+        <img src={reactLogo} className="logo" alt="React logo" style={{ width: '100px', marginLeft: '50%' }} />
+        <h1 style={{ color: 'white', marginLeft: '42%' }}>Inicio de sesión</h1>
         <div> 
-          <Button variant="primary" className="login-button" onClick={handleGoogleSignIn}>
+          <Button variant="primary" className="login-button" onClick={handleGoogleSignIn} style={{ marginLeft: '45%' }}>
             Iniciar sesión con Google
           </Button>
         </div>
