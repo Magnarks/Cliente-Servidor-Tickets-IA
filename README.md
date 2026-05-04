@@ -23,7 +23,7 @@ cd backend
 python app_ordibi.py
 ```
 
-Asegúrate de tener las dependencias de Python instaladas.
+Asegúrate de tener las dependencias de Python instaladas, dentro de la carpeta del backend está el archivo requirements.txt.
 
 ## Frontend
 
