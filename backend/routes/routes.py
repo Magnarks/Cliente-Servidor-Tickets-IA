@@ -11,6 +11,7 @@ import uuid
 import shutil
 from typing import List
 from pathlib import Path
+from datetime import datetime
 
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), 'client_secret_535675449174-m8c7a5hpgtihgnlslpi07jbi9er08s4v.apps.googleusercontent.com.json')
 if not os.path.exists(CREDENTIALS_PATH):
@@ -38,18 +39,18 @@ router = APIRouter()
 BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 
-def ejecutarConsultaMySQL(query):
+def ejecutarConsultaMySQL(query, valores = None):
     #Cursor para ejecutar consultas en MySQL
     cursor_mysql = settings.DB_MYSQL.cursor()
-    cursor_mysql.execute(query)
+    cursor_mysql.execute(query, valores or ())
     resultados = cursor_mysql.fetchall()
     # Cerrar la conexión a la base de datos MySQL
     cursor_mysql.close()
     return resultados
 
-def ejecutarQueryMySQL(query, operacion = "UPDATE"):
+def ejecutarQueryMySQL(query, operacion = "UPDATE", valores = None):
     cursor_mysql = settings.DB_MYSQL.cursor()
-    cursor_mysql.execute(query)
+    cursor_mysql.execute(query, valores or ())
     if(operacion == "INSERT"):
         insert_id = cursor_mysql.lastrowid
     settings.DB_MYSQL.commit()
@@ -73,8 +74,6 @@ async def notify_ticket_created(ticket, ticket_id):
     else:
         token_autor = resultado_token_asignado[0][0]
 
-    print(token_asignado)
-    print(token_autor)
     if (token_autor == token_asignado):
         users = set([token_autor, token_asignado])
 
@@ -147,6 +146,9 @@ async def notify_ticket_updated(ticket_id):
                 for user_id in users:
                     await manager.send_to_user(user_id, message)
 
+ESTADOS_VALIDOS = ["Abierto", "En Progreso", "En Revisión" "Cerrado"]
+PRIORIDADES_VALIDAS = ["Baja", "Media", "Alta", "Crítica"]
+
 def obtener_ticket_IA(ticket_id):
     query = f"SELECT * FROM tickets WHERE idtickets = {int(ticket_id)}"
     resultados = ejecutarConsultaMySQL(query)
@@ -160,10 +162,173 @@ def obtener_tickets_IA():
     resultados = ejecutarConsultaMySQL(query)
     return resultados
 
-def crear_ticket_IA(asunto, descripcion, autor):
-    query = f"INSERT INTO tickets (asunto, descripcion, autor) VALUES ('{asunto}', '{descripcion}', '{autor}')"
-    id_ticket = ejecutarQueryMySQL(query, "INSERT")
-    return f"Ticket creado exitosamente {id_ticket}"
+def crear_ticket_IA(asunto, descripcion, autor_email, asignado_email, prioridad="Media", estado="Abierto", comentario=None):
+    if estado not in ESTADOS_VALIDOS:
+        return f"Estado inválido. Usa uno de estos: {', '.join(ESTADOS_VALIDOS)}"
+
+    if prioridad not in PRIORIDADES_VALIDAS:
+        return f"Prioridad inválida. Usa una de estas: {', '.join(PRIORIDADES_VALIDAS)}"
+
+    
+    # resultado_autor = ejecutarConsultaMySQL(
+    #     "SELECT idusuarios FROM usuarios WHERE correousuario = %s",
+    #     (autor_email,)
+    # )
+    # if not resultado_autor:
+    #     return "El usuario autor no existe"
+    # else:
+    #     autor_id = autor_email
+
+    #autor_id = resultado_autor[0][0]
+    autor_id = autor_email
+
+    asignado_id = None
+    if asignado_email:
+        resultado_asignado = ejecutarConsultaMySQL(
+            "SELECT idusuarios FROM usuarios WHERE correousuario = %s",
+            (asignado_email,)
+        )
+        if not resultado_asignado:
+            return "El usuario asignado no existe"
+        asignado_id = resultado_asignado[0][0]
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    comentarios_guardados = []
+    if comentario:
+        comentarios_guardados.append({
+            "autor": autor_email,
+            "fecha": now,
+            "comentario": comentario
+        })
+
+    query = """
+        INSERT INTO tickets 
+        (asunto, descripcion, autor, asignado_a, estado, prioridad, fechaCreacion, fechaActualizacion, comentarios, adjuntos)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+
+    valores = (
+        asunto,
+        descripcion,
+        autor_id,
+        asignado_id,
+        estado,
+        prioridad,
+        now,
+        now,
+        json.dumps(comentarios_guardados),
+        json.dumps([])  # adjuntos vacíos
+    )
+
+    id_ticket = ejecutarQueryMySQL(query, "INSERT", valores)
+
+    try:
+        notify_ticket_created({
+            "asunto": asunto,
+            "autor": autor_email,
+            "asignado_a": asignado_email
+        }, id_ticket)
+    except Exception as e:
+        print("Error notificando:", e)
+
+    return f"Ticket #{id_ticket} creado correctamente con prioridad {prioridad} y estado {estado}"
+
+async def editar_ticket_IA(ticket_id,asunto=None,descripcion=None,asignado_email=None,estado=None,prioridad=None,comentario=None):
+    resultado_ticket = ejecutarConsultaMySQL(
+        "SELECT * FROM tickets WHERE idtickets = %s",
+        (ticket_id,)
+    )
+    if not resultado_ticket:
+        return f"El ticket #{ticket_id} no existe"
+
+    if estado and estado not in ESTADOS_VALIDOS:
+        return f"Estado inválido. Usa: {', '.join(ESTADOS_VALIDOS)}"
+
+    if prioridad and prioridad not in PRIORIDADES_VALIDAS:
+        return f"Prioridad inválida. Usa: {', '.join(PRIORIDADES_VALIDAS)}"
+
+    asignado_id = None
+    if asignado_email:
+        resultado_usuario = ejecutarConsultaMySQL(
+            "SELECT idusuarios FROM usuarios WHERE correousuario = %s",
+            (asignado_email,)
+        )
+        if not resultado_usuario:
+            return "Usuario asignado no válido"
+        asignado_id = resultado_usuario[0][0]
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    comentarios_finales = None
+    if comentario:
+        resultado_comentarios = ejecutarConsultaMySQL(
+            "SELECT comentarios FROM tickets WHERE idtickets = %s",
+            (ticket_id,)
+        )
+
+        try:
+            comentarios_previos = json.loads(resultado_comentarios[0][0]) if resultado_comentarios[0][0] else []
+        except:
+            comentarios_previos = []
+
+        comentarios_previos.append({
+            "autor": "IA",
+            "fecha": now,
+            "comentario": comentario
+        })
+
+        comentarios_finales = json.dumps(comentarios_previos)
+
+    campos = []
+    valores = []
+
+    if asunto:
+        campos.append("asunto=%s")
+        valores.append(asunto)
+
+    if descripcion:
+        campos.append("descripcion=%s")
+        valores.append(descripcion)
+
+    if asignado_id is not None:
+        campos.append("asignado_a=%s")
+        valores.append(asignado_id)
+
+    if estado:
+        campos.append("estado=%s")
+        valores.append(estado)
+
+    if prioridad:
+        campos.append("prioridad=%s")
+        valores.append(prioridad)
+
+    if comentarios_finales is not None:
+        campos.append("comentarios=%s")
+        valores.append(comentarios_finales)
+
+    campos.append("fechaActualizacion=%s")
+    valores.append(now)
+
+    if not campos:
+        return "No se proporcionaron campos para actualizar"
+
+    query = f"""
+        UPDATE tickets 
+        SET {', '.join(campos)}
+        WHERE idtickets = %s
+    """
+
+    valores.append(ticket_id)
+
+    ejecutarQueryMySQL(query, None, valores)
+
+    try:
+        await notify_ticket_updated(ticket_id)
+    except Exception as e:
+        print("Error notificando:", e)
+
+    return f"Ticket #{ticket_id} actualizado correctamente"
 
 herramientas = [
     {
@@ -195,18 +360,88 @@ herramientas = [
         }
     },
     {
-        "type": "function",
+    "type": "function",
         "function": {
             "name": "crear_ticket_IA",
-            "description": "Permite crear un nuevo ticket en el sistema.",
+            "description": "Permite crear un nuevo ticket en el sistema con validación de estado, prioridad y usuarios.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "asunto": {"type": "string", "description": "El asunto del ticket"},
-                    "descripcion": {"type": "string", "description": "La descripción detallada del problema"},
-                    "autor": {"type": "string", "description": "El nombre del autor del ticket"}
+                    "asunto": {
+                        "type": "string",
+                        "description": "El asunto del ticket"
+                    },
+                    "descripcion": {
+                        "type": "string",
+                        "description": "La descripción detallada del problema"
+                    },
+                    "autor_email": {
+                        "type": "string",
+                        "description": "Correo del autor del ticket"
+                    },
+                    "asignado_email": {
+                        "type": "string",
+                        "description": "Correo del usuario asignado al ticket (opcional)"
+                    },
+                    "prioridad": {
+                        "type": "string",
+                        "enum": ["Baja", "Media", "Alta"],
+                        "description": "Nivel de prioridad del ticket"
+                    },
+                    "estado": {
+                        "type": "string",
+                        "enum": ["Abierto", "En progreso", "Cerrado"],
+                        "description": "Estado inicial del ticket"
+                    },
+                    "comentario": {
+                        "type": "string",
+                        "description": "Comentario inicial opcional del ticket"
+                    }
                 },
-                "required": ["asunto", "descripcion", "autor"]
+                "required": ["asunto", "descripcion", "autor_email"]
+            }
+        }
+    },
+    {
+    "type": "function",
+        "function": {
+            "name": "editar_ticket_IA",
+            "description": "Permite actualizar un ticket existente parcialmente (estado, prioridad, asignación, etc.)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "ID del ticket a editar"
+                    },
+                    "asunto": {
+                        "type": "string",
+                        "description": "Nuevo asunto del ticket"
+                    },
+                    "descripcion": {
+                        "type": "string",
+                        "description": "Nueva descripción del ticket"
+                    },
+                    "asignado_email": {
+                        "type": "string",
+                        "description": "Correo del usuario a asignar"
+                    },
+                    "estado": {
+                        "type": "string",
+                        "enum": ["Abierto", "En progreso", "Cerrado"],
+                        "description": "Nuevo estado del ticket"
+                    },
+                    "prioridad": {
+                        "type": "string",
+                        "enum": ["Baja", "Media", "Alta"],
+                        "description": "Nueva prioridad"
+                    },
+                    "comentario": {
+                        "type": "string",
+                        "description": "Comentario a agregar al ticket"
+                    }
+                },
+                "required": ["ticket_id"]
             }
         }
     }
@@ -414,7 +649,7 @@ async def chat(consulta: Consulta):
             return {"response": "Por favor, envía un mensaje válido."}
   
         # Crear generador para el streaming
-        def generate():
+        async def generate():
             respuesta_completa = ""
             
             # Primera llamada al modelo (sin streaming) para detectar tool_calls
@@ -457,9 +692,23 @@ async def chat(consulta: Consulta):
                         resultado = obtener_tickets_IA()
                     elif tool_name == "crear_ticket_IA":
                         resultado = crear_ticket_IA(
-                            tool_args.get("asunto"),
-                            tool_args.get("descripcion"),
-                            tool_args.get("autor")
+                            asunto=tool_args.get("asunto"),
+                            descripcion=tool_args.get("descripcion"),
+                            autor_email=usuario,
+                            asignado_email=tool_args.get("asignado_email") or tool_args.get("autor_email"),
+                            prioridad=tool_args.get("prioridad", "Media"),
+                            estado=tool_args.get("estado", "Abierto"),
+                            comentario=tool_args.get("comentario")
+                        )
+                    elif tool_name == "editar_ticket_IA":
+                        resultado = await editar_ticket_IA(
+                            ticket_id=tool_args.get("ticket_id"),
+                            asunto=tool_args.get("asunto"),
+                            descripcion=tool_args.get("descripcion"),
+                            asignado_email=tool_args.get("asignado_email"),
+                            estado=tool_args.get("estado"),
+                            prioridad=tool_args.get("prioridad"),
+                            comentario=tool_args.get("comentario")
                         )
                     else:
                         resultado = "Función no reconocida"

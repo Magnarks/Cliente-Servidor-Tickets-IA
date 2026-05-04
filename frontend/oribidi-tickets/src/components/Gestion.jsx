@@ -391,6 +391,7 @@ function Gestion() {
               setColorToast('warning');
               setPosicionToast('bottom-end');
               setShowToast(true);
+              endpointObtenerTickets(objSesion);
             }
 
             if (data.type === "ticket_updated") { //&& data.autor !== userData.email
@@ -400,6 +401,7 @@ function Gestion() {
               setColorToast('warning');
               setPosicionToast('bottom-end');
               setShowToast(true);
+              endpointObtenerTickets(objSesion);
             }
         };
 

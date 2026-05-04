@@ -52,7 +52,7 @@ function ChatModal({ show, handleClose, usuario }) {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ message: data, usuario: usuario?.user_name || "prueba" })
+      body: JSON.stringify({ message: data, usuario: usuario?.user_email || "prueba@email.com" })
     })
     .then(response => {
       if (!response.ok) {
