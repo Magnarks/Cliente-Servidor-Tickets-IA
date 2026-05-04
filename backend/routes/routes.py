@@ -635,6 +635,52 @@ async def upload_file(ticket_id: int, files: List[UploadFile] = File(...)):
         "files": archivos_guardados
     }
 
+@router.delete("/eliminar-adjunto/{ticket_id}")
+async def eliminar_adjunto(ticket_id: int, nombre_guardado: str):
+
+    resultado = ejecutarConsultaMySQL(
+        "SELECT adjuntos FROM tickets WHERE idtickets = %s",
+        (ticket_id,)
+    )
+
+    if not resultado:
+        raise HTTPException(status_code=404, detail="Ticket no encontrado")
+
+    try:
+        adjuntos = json.loads(resultado[0][0]) if resultado[0][0] else []
+    except:
+        adjuntos = []
+
+    archivo_encontrado = None
+    nuevos_adjuntos = []
+
+    for file in adjuntos:
+        if file["guardado"] == nombre_guardado:
+            archivo_encontrado = file
+        else:
+            nuevos_adjuntos.append(file)
+
+    if not archivo_encontrado:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado en el ticket")
+
+    ruta_archivo = os.path.join(UPLOAD_DIR, str(ticket_id), nombre_guardado)
+
+    if os.path.exists(ruta_archivo):
+        os.remove(ruta_archivo)
+
+    ejecutarQueryMySQL(
+        "UPDATE tickets SET adjuntos = %s WHERE idtickets = %s",
+        None,
+        (json.dumps(nuevos_adjuntos), ticket_id)
+    )
+
+    try:
+        await notify_ticket_updated(ticket_id)
+    except Exception as e:
+        print("Error notificando:", e)
+
+    return {"message": "Adjunto eliminado correctamente"}
+
 @router.post("/chat")
 async def chat(consulta: Consulta):
     usuario = consulta.usuario

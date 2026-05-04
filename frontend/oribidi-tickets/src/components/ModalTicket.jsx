@@ -70,8 +70,24 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
     handleClose();
   };
 
-  function eliminarArchivo() {
-    console.error()
+  function eliminarArchivo(idticket, file) {
+    fetch(`http://127.0.0.1:8000/eliminar-adjunto/${idticket}?nombre_guardado=${file.guardado}`, {
+        method: 'DELETE'
+    })
+    .then(res => res.json())
+    .then(data => {
+        setMsgToast('Adjunto eliminado correctamente');
+        setColorToast('success');
+        setShowToast(true);
+        // refrescar ticket
+        // endpointObtenerTickets(userData);
+    })
+    .catch(err => {
+        console.error(err);
+        setMsgToast('Error al eliminar adjunto');
+        setColorToast('danger');
+        setShowToast(true);
+    });
   }
 
   return (
@@ -312,7 +328,7 @@ function ModalTicket({ show, handleClose, ticket, onSave, usuario, usuarios }) {
                                 <td>
                                     <a 
                                         title="Eliminar archivo"
-                                        onClick={eliminarArchivo}
+                                        onClick={eliminarArchivo(formData.id, file)}
                                     >
                                         <i 
                                         className="fa-solid fa-trash" 
