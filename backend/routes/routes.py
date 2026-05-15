@@ -153,9 +153,22 @@ def obtener_ticket_IA(ticket_id):
     query = f"SELECT * FROM tickets WHERE idtickets = {int(ticket_id)}"
     resultados = ejecutarConsultaMySQL(query)
     if resultados:
-        return resultados[0]  # Retorna el primer resultado encontrado
+        t = resultados[0]
+        return {
+            "id": t[0],
+            "asunto": t[1],
+            "descripcion": t[2],
+            "autor": t[3],
+            "asignado_a": t[4],
+            "estado": t[5],
+            "prioridad": t[6],
+            "fecha_creacion": str(t[7]),
+            "fecha_actualizacion": str(t[8]),
+            "comentarios": json.loads(t[9]) if t[9] else [],
+            "adjuntos": json.loads(t[10]) if t[10] else []
+        } # Retorna el primer resultado encontrado
     else:
-        return None  # Retorna None si no se encuentra el ticket
+        return {"error": "Ticket no encontrado"}  # Retorna None si no se encuentra el ticket
     
 def obtener_tickets_IA():
     query = "SELECT * FROM tickets"
